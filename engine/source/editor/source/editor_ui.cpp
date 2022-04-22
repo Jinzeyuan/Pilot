@@ -29,6 +29,8 @@ namespace Pilot
 {
     std::vector<std::pair<std::string, bool>> g_editor_node_state_array;
     int                                       g_node_depth = -1;
+    void DrawVecControl(const std::string &label, Pilot::Vector3 &values, float resetValue = 0.0f, float columnWidth = 100.0f);
+    void DrawVecControl(const std::string &label, Pilot::Quaternion &values, float resetValue = 0.0f, float columnWidth = 100.0f);
 
     EditorUI::EditorUI(PilotEditor* editor) : m_editor(editor)
     {
@@ -69,27 +71,10 @@ namespace Pilot
             {
                 Transform* trans_ptr = static_cast<Transform*>(value_ptr);
 
-                float position_val[3] = {trans_ptr->m_position.x, trans_ptr->m_position.y, trans_ptr->m_position.z};
-                float rotation_val[4] = {
-                    trans_ptr->m_rotation.x, trans_ptr->m_rotation.y, trans_ptr->m_rotation.z, trans_ptr->m_rotation.w};
-                float scale_val[3] = {trans_ptr->m_scale.x, trans_ptr->m_scale.y, trans_ptr->m_scale.z};
+                DrawVecControl("Position", trans_ptr->m_position);
+                DrawVecControl("Rotation", trans_ptr->m_rotation);
+                DrawVecControl("Scale", trans_ptr->m_scale);
 
-                ImGui::TableNextColumn();
-                ImGui::Text("Position");
-                ImGui::TableNextColumn();
-                ImGui::DragFloat3("##Position", position_val);
-                ImGui::TableNextColumn();
-                ImGui::Text("Rotation");
-                ImGui::TableNextColumn();
-                ImGui::DragFloat4("##Rotation", rotation_val);
-                ImGui::TableNextColumn();
-                ImGui::Text("Scale");
-                ImGui::TableNextColumn();
-                ImGui::DragFloat3("##Scale", scale_val);
-
-                trans_ptr->m_position = Vector3(position_val[0], position_val[1], position_val[2]);
-                trans_ptr->m_rotation = Quaternion(rotation_val[3], rotation_val[0], rotation_val[1], rotation_val[2]);
-                trans_ptr->m_scale    = Vector3(scale_val[0], scale_val[1], scale_val[2]);
                 drawSelectedEntityAxis();
             }
         };
@@ -220,6 +205,11 @@ namespace Pilot
             parent_label += g_editor_node_state_array[index].first + "::";
         }
         return parent_label;
+    }
+
+    bool EditorUI::isCursorInRect(Vector2 pos, Vector2 size) const
+    {
+        return pos.x <= m_mouse_x && m_mouse_x <= pos.x + size.x && pos.y <= m_mouse_y && m_mouse_y <= pos.y + size.y;
     }
 
     GObject* EditorUI::getSelectedGObject() const
@@ -553,9 +543,16 @@ namespace Pilot
             ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_NoHide);
             ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed);
             ImGui::TableHeadersRow();
-            Pilot::EditorFileService editor_file_service;
-            editor_file_service.buildEngineFileTree();
-            EditorFileNode* editor_root_node = editor_file_service.getEditorRootNode();
+
+            auto current_time = std::chrono::steady_clock::now();
+            if (current_time - m_last_file_tree_update > std::chrono::seconds(1))
+            {
+                m_editor_file_service.buildEngineFileTree();
+                m_last_file_tree_update = current_time;
+            }
+            m_last_file_tree_update = current_time;
+
+            EditorFileNode* editor_root_node = m_editor_file_service.getEditorRootNode();
             buildEditorFileAssstsUITree(editor_root_node);
             ImGui::EndTable();
         }
@@ -620,13 +617,14 @@ namespace Pilot
             ImGui::SameLine();
 
             float indent_val = 0.0f;
-            indent_val       = m_engine_window_size.x - 100.0f;
+            indent_val       = m_engine_window_size.x - 100.0f * getIndentScale();
+
             ImGui::Indent(indent_val);
             if (m_is_editor_mode)
             {
                 ImGui::PushID("Editor Mode");
                 ImGui::Button("Editor Mode");
-                if (ImGui::IsItemClicked(0))
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
                 {
                     m_is_editor_mode = !m_is_editor_mode;
                     drawSelectedEntityAxis();
@@ -638,7 +636,7 @@ namespace Pilot
             else
             {
                 ImGui::Button("Game Mode");
-                if (ImGui::IsItemClicked(0))
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
                 {
                     m_is_editor_mode = !m_is_editor_mode;
                     g_is_editor_mode = true;
@@ -667,6 +665,9 @@ namespace Pilot
         // if (new_window_pos != m_engine_window_pos || new_window_size != m_engine_window_size)
         {
 #if defined(__MACH__)
+            // The dpi_scale is not reactive to DPI changes or monitor switching, it might be a bug from ImGui.
+            // Return value from ImGui::GetMainViewport()->DpiScal is always the same as first frame.
+            // glfwGetMonitorContentScale and glfwSetWindowContentScaleCallback are more adaptive.
             float dpi_scale = main_viewport->DpiScale;
             m_editor->onWindowChanged(new_window_pos.x * dpi_scale,
                                       new_window_pos.y * dpi_scale,
@@ -845,31 +846,27 @@ namespace Pilot
         unsigned int command = InputSystem::getInstance().getEditorCommand();
         if ((unsigned int)EditorCommand::camera_foward & command)
         {
-            camera_relative_pos = {0, camera_speed, 0};
-            camera_relative_pos = camera_rotate * camera_relative_pos;
+            camera_relative_pos += camera_rotate * Vector3{0, camera_speed, 0};
         }
         if ((unsigned int)EditorCommand::camera_back & command)
         {
-            camera_relative_pos = {0, -camera_speed, 0};
-            camera_relative_pos = camera_rotate * camera_relative_pos;
+            camera_relative_pos += camera_rotate * Vector3 {0, -camera_speed, 0};
         }
         if ((unsigned int)EditorCommand::camera_left & command)
         {
-            camera_relative_pos = {-camera_speed, 0, 0};
-            camera_relative_pos = camera_rotate * camera_relative_pos;
+            camera_relative_pos += camera_rotate * Vector3 {-camera_speed, 0, 0};
         }
         if ((unsigned int)EditorCommand::camera_right & command)
         {
-            camera_relative_pos = {camera_speed, 0, 0};
-            camera_relative_pos = camera_rotate * camera_relative_pos;
+            camera_relative_pos += camera_rotate * Vector3 {camera_speed, 0, 0};
         }
         if ((unsigned int)EditorCommand::camera_up & command)
         {
-            camera_relative_pos = {0, 0, camera_speed};
+            camera_relative_pos += Vector3 {0, 0, camera_speed};
         }
         if ((unsigned int)EditorCommand::camera_down & command)
         {
-            camera_relative_pos = {0, 0, -camera_speed};
+            camera_relative_pos += Vector3 {0, 0, -camera_speed};
         }
         if ((unsigned int)EditorCommand::delete_object & command)
         {
@@ -904,7 +901,7 @@ namespace Pilot
         {
             if (m_io->isMouseButtonDown(GLFW_MOUSE_BUTTON_RIGHT))
             {
-                glfwSetInputMode(m_io->m_window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+                glfwSetInputMode(m_io->m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                 m_tmp_uistate->m_editor_camera->rotate(Vector2(ypos - m_mouse_y, xpos - m_mouse_x) * angularVelocity);
             }
             else if (m_io->isMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT))
@@ -916,8 +913,7 @@ namespace Pilot
             {
                 glfwSetInputMode(m_io->m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
-                if (m_mouse_x > m_engine_window_pos.x && m_mouse_x < (m_engine_window_pos.x + m_engine_window_size.x) &&
-                    m_mouse_y > m_engine_window_pos.y && m_mouse_y < (m_engine_window_pos.y + m_engine_window_size.y))
+                if (isCursorInRect(m_engine_window_pos, m_engine_window_size))
                 {
                     Vector2 cursor_uv = Vector2((m_mouse_x - m_engine_window_pos.x) / m_engine_window_size.x,
                                                 (m_mouse_y - m_engine_window_pos.y) / m_engine_window_size.y);
@@ -944,8 +940,7 @@ namespace Pilot
             return;
         }
         // wheel scrolled up = zoom in by 2 extra degrees
-        if (m_mouse_x > m_engine_window_pos.x && m_mouse_x < (m_engine_window_pos.x + m_engine_window_size.x) &&
-            m_mouse_y > m_engine_window_pos.y && m_mouse_y < (m_engine_window_pos.y + m_engine_window_size.y))
+        if (isCursorInRect(m_engine_window_pos, m_engine_window_size))
         {
             m_tmp_uistate->m_editor_camera->zoom((float)yoffset * 2.0f);
         }
@@ -962,8 +957,7 @@ namespace Pilot
         if (current_active_level == nullptr)
             return;
 
-        if (m_mouse_x > m_engine_window_pos.x && m_mouse_x < (m_engine_window_pos.x + m_engine_window_size.x) &&
-            m_mouse_y > m_engine_window_pos.y && m_mouse_y < (m_engine_window_pos.y + m_engine_window_size.y))
+        if (isCursorInRect(m_engine_window_pos, m_engine_window_size))
         {
             if (key == GLFW_MOUSE_BUTTON_LEFT)
             {
@@ -1212,5 +1206,127 @@ namespace Pilot
         }
         m_selected_object_matrix = new_model_matrix;
     }
+    void DrawVecControl(const std::string &label, Pilot::Vector3 &values, float resetValue, float columnWidth)
+    {
+        ImGui::PushID(label.c_str());
 
+        ImGui::Columns(2);
+        ImGui::SetColumnWidth(0, columnWidth);
+        ImGui::Text("%s", label.c_str());
+        ImGui::NextColumn();
+
+        ImGui::PushMultiItemsWidths(3, ImGui::CalcItemWidth());
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{0, 0});
+
+        float lineHeight = GImGui->Font->FontSize + GImGui->Style.FramePadding.y * 2.0f;
+        ImVec2 buttonSize = {lineHeight + 3.0f, lineHeight};
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.8f, 0.1f, 0.15f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.9f, 0.2f, 0.2f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.8f, 0.1f, 0.15f, 1.0f});
+        if (ImGui::Button("X", buttonSize))
+            values.x = resetValue;
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine();
+        ImGui::DragFloat("##X", &values.x, 0.1f, 0.0f, 0.0f, "%.2f");
+        ImGui::PopItemWidth();
+        ImGui::SameLine();
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.2f, 0.45f, 0.2f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.3f, 0.55f, 0.3f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.2f, 0.45f, 0.2f, 1.0f});
+        if (ImGui::Button("Y", buttonSize))
+            values.y = resetValue;
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine();
+        ImGui::DragFloat("##Y", &values.y, 0.1f, 0.0f, 0.0f, "%.2f");
+        ImGui::PopItemWidth();
+        ImGui::SameLine();
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.1f, 0.25f, 0.8f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.2f, 0.35f, 0.9f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.1f, 0.25f, 0.8f, 1.0f});
+        if (ImGui::Button("Z", buttonSize))
+            values.z = resetValue;
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine();
+        ImGui::DragFloat("##Z", &values.z, 0.1f, 0.0f, 0.0f, "%.2f");
+        ImGui::PopItemWidth();
+
+        ImGui::PopStyleVar();
+
+        ImGui::Columns(1);
+        ImGui::PopID();
+    }
+
+    void DrawVecControl(const std::string &label, Pilot::Quaternion &values, float resetValue, float columnWidth)
+    {
+        ImGui::PushID(label.c_str());
+
+        ImGui::Columns(2);
+        ImGui::SetColumnWidth(0, columnWidth);
+        ImGui::Text("%s", label.c_str());
+        ImGui::NextColumn();
+
+        ImGui::PushMultiItemsWidths(4, ImGui::CalcItemWidth());
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{0, 0});
+
+        float lineHeight = GImGui->Font->FontSize + GImGui->Style.FramePadding.y * 2.0f;
+        ImVec2 buttonSize = {lineHeight + 3.0f, lineHeight};
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.8f, 0.1f, 0.15f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.9f, 0.2f, 0.2f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.8f, 0.1f, 0.15f, 1.0f});
+        if (ImGui::Button("X", buttonSize))
+            values.x = resetValue;
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine();
+        ImGui::DragFloat("##X", &values.x, 0.1f, 0.0f, 0.0f, "%.2f");
+        ImGui::PopItemWidth();
+        ImGui::SameLine();
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.2f, 0.45f, 0.2f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.3f, 0.55f, 0.3f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.2f, 0.45f, 0.2f, 1.0f});
+        if (ImGui::Button("Y", buttonSize))
+            values.y = resetValue;
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine();
+        ImGui::DragFloat("##Y", &values.y, 0.1f, 0.0f, 0.0f, "%.2f");
+        ImGui::PopItemWidth();
+        ImGui::SameLine();
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.1f, 0.25f, 0.8f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.2f, 0.35f, 0.9f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.1f, 0.25f, 0.8f, 1.0f});
+        if (ImGui::Button("Z", buttonSize))
+            values.z = resetValue;
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine();
+        ImGui::DragFloat("##Z", &values.z, 0.1f, 0.0f, 0.0f, "%.2f");
+        ImGui::PopItemWidth();
+        ImGui::SameLine();
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.5f, 0.25f, 0.5f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.6f, 0.35f, 0.6f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.5f, 0.25f, 0.5f, 1.0f});
+        if (ImGui::Button("W", buttonSize))
+            values.w = resetValue;
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine();
+        ImGui::DragFloat("##W", &values.w, 0.1f, 0.0f, 0.0f, "%.2f");
+        ImGui::PopItemWidth();
+
+        ImGui::PopStyleVar();
+
+        ImGui::Columns(1);
+        ImGui::PopID();
+    }
 } // namespace Pilot
